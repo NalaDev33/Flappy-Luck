@@ -1,1 +1,353 @@
-[index.html](https://github.com/user-attachments/files/25348596/index.html)
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Flappy Luck</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+    font-family: 'Segoe UI', sans-serif;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+    user-select: none;
+  }
+  canvas {
+    display: block;
+    border-radius: 12px;
+    max-width: 100vw;
+    max-height: 100vh;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+
+function resize() {
+  const MAX_W = 400;
+  const MAX_H = 600;
+  const s = Math.min(window.innerWidth / MAX_W, window.innerHeight / MAX_H, 1.2);
+  canvas.width = MAX_W;
+  canvas.height = MAX_H;
+  canvas.style.width = (MAX_W * s) + 'px';
+  canvas.style.height = (MAX_H * s) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+const W = 400;
+const H = 600;
+
+const COL = {
+  sky1: '#0f0c29', sky2: '#302b63', sky3: '#24243e',
+  ground: '#2d1b69', groundLine: '#ff6b35',
+  pipe: '#7c3aed', pipeEdge: '#a855f7', pipeHi: '#c084fc',
+  text: '#fff', gold: '#fbbf24',
+  scoreBox: 'rgba(124,58,237,0.6)',
+  clover: '#7fdfb0', cloverDark: '#5bc48a', cloverGlow: '#7fdfb0'
+};
+
+let bird, pipes, particles, stars;
+let score = 0, bestScore = 0;
+let gameState = 'start';
+let frame = 0, groundX = 0, flashAlpha = 0;
+
+const GRAV = 0.5, FLAP = -7.8, PSPD = 3, GAP = 140, PW = 55, SPAWN = 150;
+const BSIZE = 15, GH = 60;
+
+function mkStars() {
+  stars = [];
+  for (let i = 0; i < 60; i++) stars.push({
+    x: Math.random()*W, y: Math.random()*(H-GH),
+    sz: Math.random()*2+0.5, tw: Math.random()*Math.PI*2, sp: Math.random()*0.02+0.01
+  });
+}
+
+function reset() {
+  bird = { x: W*0.3, y: H*0.4, vy: 0, rot: 0 };
+  pipes = []; particles = [];
+  score = 0; frame = 0; groundX = 0; flashAlpha = 0;
+}
+
+function flap() {
+  if (gameState === 'start') { gameState = 'playing'; reset(); bird.vy = FLAP; return; }
+  if (gameState === 'playing') {
+    bird.vy = FLAP;
+    for (let i = 0; i < 3; i++) particles.push({
+      x: bird.x-5, y: bird.y+10, vx: -Math.random()*2-1, vy: Math.random()*2-1,
+      life: 1, sz: Math.random()*3+2, col: COL.clover
+    });
+    return;
+  }
+  if (gameState === 'dead') { gameState = 'start'; reset(); }
+}
+
+canvas.addEventListener('click', flap);
+canvas.addEventListener('touchstart', e => { e.preventDefault(); flap(); });
+document.addEventListener('keydown', e => { if (e.code==='Space') { e.preventDefault(); flap(); }});
+
+function spawnPipe() {
+  const minY = 80, maxY = H-GH-GAP-80;
+  pipes.push({ x: W+10, topH: Math.random()*(maxY-minY)+minY, scored: false, flash: 0 });
+}
+
+function update() {
+  frame++;
+  if (gameState !== 'playing') {
+    if (gameState === 'start') bird.y = H*0.4 + Math.sin(frame*0.05)*15;
+    groundX = (groundX+1)%40;
+    return;
+  }
+  bird.vy += GRAV; bird.y += bird.vy;
+  bird.rot = Math.min(Math.max(bird.vy*3, -30), 70);
+  groundX = (groundX+PSPD)%40;
+
+  if (frame%SPAWN===0 || (pipes.length===0 && frame>30)) spawnPipe();
+
+  for (let i = pipes.length-1; i >= 0; i--) {
+    pipes[i].x -= PSPD;
+    if (pipes[i].flash > 0) pipes[i].flash -= 0.05;
+    if (!pipes[i].scored && pipes[i].x+PW < bird.x) {
+      pipes[i].scored = true; pipes[i].flash = 1; score++;
+      for (let j = 0; j < 8; j++) {
+        const a = (Math.PI*2/8)*j;
+        particles.push({ x:bird.x, y:bird.y, vx:Math.cos(a)*3, vy:Math.sin(a)*3,
+          life:1, sz:Math.random()*3+2, col:COL.gold });
+      }
+    }
+    if (pipes[i].x+PW < -10) pipes.splice(i,1);
+  }
+
+  for (let i = particles.length-1; i >= 0; i--) {
+    particles[i].x += particles[i].vx; particles[i].y += particles[i].vy;
+    particles[i].life -= 0.03;
+    if (particles[i].life <= 0) particles.splice(i,1);
+  }
+
+  if (flashAlpha > 0) flashAlpha -= 0.05;
+  if (bird.y+BSIZE > H-GH) { die(); return; }
+  if (bird.y-BSIZE < 0) { bird.y = BSIZE; bird.vy = 0; }
+
+  for (const p of pipes) {
+    const r = BSIZE-2;
+    if (bird.x+r > p.x && bird.x-r < p.x+PW) {
+      if (bird.y-r < p.topH || bird.y+r > p.topH+GAP) { die(); return; }
+    }
+  }
+}
+
+function die() {
+  gameState = 'dead'; flashAlpha = 1;
+  if (score > bestScore) bestScore = score;
+  for (let i = 0; i < 12; i++) particles.push({
+    x:bird.x, y:bird.y, vx:(Math.random()-0.5)*6, vy:(Math.random()-0.5)*6,
+    life:1, sz:Math.random()*4+2, col: Math.random()>0.5 ? COL.clover : COL.cloverDark
+  });
+}
+
+function drawBg() {
+  const g = ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,COL.sky1); g.addColorStop(0.5,COL.sky2); g.addColorStop(1,COL.sky3);
+  ctx.fillStyle = g; ctx.fillRect(0,0,W,H);
+  for (const s of stars) {
+    s.tw += s.sp;
+    ctx.fillStyle = `rgba(255,255,255,${0.3+Math.sin(s.tw)*0.3})`;
+    ctx.beginPath(); ctx.arc(s.x,s.y,s.sz,0,Math.PI*2); ctx.fill();
+  }
+}
+
+function drawGround() {
+  const g = ctx.createLinearGradient(0,H-GH,0,H);
+  g.addColorStop(0,'#2d1b69'); g.addColorStop(1,'#1a0e3e');
+  ctx.fillStyle = g; ctx.fillRect(0,H-GH,W,GH);
+  ctx.strokeStyle = COL.groundLine; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(0,H-GH); ctx.lineTo(W,H-GH); ctx.stroke();
+  ctx.strokeStyle = 'rgba(124,58,237,0.3)'; ctx.lineWidth = 1;
+  for (let x = -groundX; x < W+40; x += 40) {
+    ctx.beginPath(); ctx.moveTo(x,H-GH+10); ctx.lineTo(x+20,H-GH+30); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x+20,H-GH+10); ctx.lineTo(x,H-GH+30); ctx.stroke();
+  }
+}
+
+function drawPipe(p) {
+  const tG = ctx.createLinearGradient(p.x,0,p.x+PW,0);
+  tG.addColorStop(0,COL.pipe); tG.addColorStop(0.3,COL.pipeHi); tG.addColorStop(1,COL.pipe);
+  if (p.flash>0) { ctx.shadowColor=COL.gold; ctx.shadowBlur=20*p.flash; }
+
+  ctx.fillStyle = tG;
+  ctx.beginPath(); ctx.roundRect(p.x+3,0,PW-6,p.topH-15,[0,0,4,4]); ctx.fill();
+  ctx.fillStyle = COL.pipeEdge;
+  ctx.beginPath(); ctx.roundRect(p.x-3,p.topH-25,PW+6,25,[4,4,4,4]); ctx.fill();
+
+  const bY = p.topH+GAP;
+  ctx.fillStyle = tG;
+  ctx.beginPath(); ctx.roundRect(p.x+3,bY+15,PW-6,H-GH-bY,[4,4,0,0]); ctx.fill();
+  ctx.fillStyle = COL.pipeEdge;
+  ctx.beginPath(); ctx.roundRect(p.x-3,bY,PW+6,25,[4,4,4,4]); ctx.fill();
+  ctx.shadowBlur = 0;
+}
+
+function drawClover() {
+  ctx.save();
+  ctx.translate(bird.x, bird.y);
+  const r = bird.rot || 0;
+  ctx.rotate(r * Math.PI / 180);
+
+  const S = BSIZE;
+
+  ctx.shadowColor = COL.cloverGlow;
+  ctx.shadowBlur = 12;
+
+  ctx.fillStyle = COL.clover;
+  ctx.strokeStyle = '#1a1a2e';
+  ctx.lineWidth = 1.2;
+
+  function drawLeaf(angle) {
+    ctx.save();
+    ctx.rotate(angle);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.bezierCurveTo(-S*0.8, -S*0.2, -S*0.9, -S*0.9, -S*0.15, -S*0.85);
+    ctx.bezierCurveTo(0, -S*0.6, 0, -S*0.6, S*0.15, -S*0.85);
+    ctx.bezierCurveTo(S*0.9, -S*0.9, S*0.8, -S*0.2, 0, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawLeaf(0);
+  drawLeaf(Math.PI * 0.5);
+  drawLeaf(Math.PI);
+  drawLeaf(Math.PI * 1.5);
+
+  ctx.shadowBlur = 0;
+
+  ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 4; i++) {
+    ctx.save();
+    ctx.rotate(i * Math.PI * 0.5);
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, -S*0.65);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.restore();
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    ctx.globalAlpha = p.life;
+    ctx.fillStyle = p.col;
+    ctx.beginPath(); ctx.arc(p.x,p.y,p.sz*p.life,0,Math.PI*2); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function drawScore() {
+  if (gameState==='playing') {
+    ctx.fillStyle = COL.scoreBox;
+    ctx.beginPath(); ctx.roundRect(W/2-30,15,60,45,10); ctx.fill();
+    ctx.fillStyle = COL.text;
+    ctx.font = 'bold 32px "Segoe UI",sans-serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(score, W/2, 38);
+  }
+}
+
+function drawStart() {
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = 'rgba(45,140,60,0.5)';
+  ctx.font = 'bold 28px "Segoe UI",sans-serif';
+  ctx.fillText('THE LUCKY ARENA', W/2+2, 105+2);
+  ctx.fillStyle = '#2d8c3c';
+  ctx.fillText('THE LUCKY ARENA', W/2, 105);
+
+  ctx.fillStyle = 'rgba(45,140,60,0.5)';
+  ctx.font = 'bold 32px "Segoe UI",sans-serif';
+  ctx.fillText('GAMES', W/2+2, 142+2);
+  ctx.fillStyle = '#2d8c3c';
+  ctx.fillText('GAMES', W/2, 142);
+
+  ctx.fillStyle = 'rgba(255,255,255,0.5)';
+  ctx.font = '15px "Segoe UI",sans-serif';
+  ctx.fillText('FLAPPY LUCK', W/2, 172);
+
+  const pulse = 0.5+Math.sin(frame*0.08)*0.3;
+  ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+  ctx.font = '18px "Segoe UI",sans-serif';
+  ctx.fillText('TAP TO PLAY', W/2, H*0.65);
+
+  if (bestScore>0) {
+    ctx.fillStyle = COL.gold;
+    ctx.font = 'bold 16px "Segoe UI",sans-serif';
+    ctx.fillText('BEST: '+bestScore, W/2, H*0.72);
+  }
+}
+
+function drawDeath() {
+  ctx.fillStyle = 'rgba(15,12,41,0.7)';
+  ctx.fillRect(0,0,W,H);
+
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+
+  ctx.fillStyle = '#2d8c3c';
+  ctx.font = 'bold 38px "Segoe UI",sans-serif';
+  ctx.fillText('GAME OVER', W/2, H*0.3);
+
+  ctx.fillStyle = 'rgba(124,58,237,0.4)';
+  ctx.beginPath(); ctx.roundRect(W/2-90,H*0.38,180,120,15); ctx.fill();
+  ctx.strokeStyle = 'rgba(168,85,247,0.5)'; ctx.lineWidth = 2; ctx.stroke();
+
+  ctx.fillStyle = 'rgba(255,255,255,0.6)';
+  ctx.font = '16px "Segoe UI",sans-serif';
+  ctx.fillText('SCORE', W/2, H*0.43);
+
+  ctx.fillStyle = COL.text;
+  ctx.font = 'bold 40px "Segoe UI",sans-serif';
+  ctx.fillText(score, W/2, H*0.49);
+
+  ctx.fillStyle = COL.gold;
+  ctx.font = '14px "Segoe UI",sans-serif';
+  ctx.fillText('BEST: '+bestScore, W/2, H*0.55);
+
+  const pulse = 0.5+Math.sin(frame*0.08)*0.3;
+  ctx.fillStyle = `rgba(255,255,255,${pulse})`;
+  ctx.font = '18px "Segoe UI",sans-serif';
+  ctx.fillText('TAP TO RESTART', W/2, H*0.7);
+}
+
+function loop() {
+  update();
+  drawBg();
+  for (const p of pipes) drawPipe(p);
+  drawGround();
+  drawParticles();
+  drawClover();
+  drawScore();
+  if (gameState==='start') drawStart();
+  if (gameState==='dead') drawDeath();
+  if (flashAlpha>0) {
+    ctx.fillStyle = `rgba(255,255,255,${flashAlpha})`;
+    ctx.fillRect(0,0,W,H);
+  }
+  requestAnimationFrame(loop);
+}
+
+mkStars(); reset(); loop();
+</script>
+</body>
+</html>
